@@ -87,7 +87,7 @@ def merge_centroids(texts:list[str],model:str=LLM_MODEL)->tuple[str,list[str]]:
     merge_prompt = """Expertly identify what's common between the provided similar statements and write in JSON key `MERGED_STATEMENT_PATTERNS` a unified detailed pattern statement that describes what's common to them all.
 - Keep the merged output under 80 words. Write tersely, omit unnecessary words which do not reduce detail nor clarity of meaning.
 - Do not enumerate how they differ.
-- Use the `Occurrance Frequency` to weight the relative significance of each statement to help determine what's most important to merge into the `MERGED_STATEMENT_PATTERNS` output array.
+- Use the `Occurrance Frequency` to weight the relative significance of each statement to help determine what's most important to merge into the `MERGED_STATEMENT_PATTERNS` output string.
 - Write everything in a single sentence.
 - Never include a title or descriptive prefix of the unified statement itself.
 Output only in JSON similar to this: `{ "MERGED_STATEMENT_PATTERNS": "<< unified common pattern statement string, here >>" }`
