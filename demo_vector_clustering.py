@@ -126,9 +126,13 @@ Output only in JSON similar to this: `{ "MERGED_STATEMENT_PATTERNS": "<< unified
     ]
     while True:
         try:
+            # set temperature and frequency_penalty
+            # for dry, factual statements
             completion = model_client.chat.completions.create(
                 model=model,
                 messages=messages,
+                temperature=0.0,
+                frequency_penalty=0.5,
                 max_tokens=LLM_REPLY_TOKEN_RESERVE,
                 timeout=15,
             )
