@@ -34,16 +34,32 @@ from vector_cluster_hierarchy_chart import (
     chart_cluster_hierarchy
 )
 
-CONFIGURE_VEC2TEXT = False # False to disable vec2text reversals
+# Configure target vector db - local test Mongo server, or any valid user-auth'd URI etc.
+VECTOR_MONGO_URI = "localhost:27017"
+VECTOR_DB_NAME = "demo_db"
+
+# Configure target MongoDB collection of embedded content vectors to analyze.
+VECTOR_COLLECTION = "demo_target_vectors"
+
+# Configure for each vector field in VECTOR_COLLECTION we want to cluster upon.
+# Use its source text field name: embedding field name as a {key: value} pair.
+# Use "text": "embedding" for demo vectors
+V_EMBEDDINGS = {
+    "text": "embedding",
+}
+
+# Configure namespace of the output clustered centroids data
+FITTED_COLLECTION = VECTOR_COLLECTION + "_fitted_semantic_clusters"
+
+# Configure enabling vec2text centroid means to text reversals
+# for non-trivial cluster membership
+CONFIGURE_VEC2TEXT = False # True to enable
 if CONFIGURE_VEC2TEXT:
     from reverse_vector_vec2text import reverse_embedding_vectors_to_texts
 
 # Configure OpenAI completion model to use for Method 3 centroid texts merging
 LLM_MODEL = "gpt-4o"
-LLM_MODEL_TOKEN_BUDGET = 16000 # stick to 16 kT upper bound for demo
-
-# Configure namespace of target MongoDB collection of embedded content vectors to analyze.
-VECTOR_COLLECTION = "demo_target_vectors"
+LLM_MODEL_TOKEN_BUDGET = 16000 # stick to 16 kT upper bound for LLM focus
 
 # Configure embedding model used in VECTOR_COLLECTION vectors
 # NOTE: must be "text-embedding-ada-002" for vec2text vector reversal
@@ -55,24 +71,13 @@ EMBEDDING_MODEL = "text-embedding-ada-002" # "text-embedding-3-small"
 MINIMUM_VECTORS_PER_CLUSTER = [2] # [512,256,128,64,32,16]
 print(f"Fitting min_vectors_per_clusters: {MINIMUM_VECTORS_PER_CLUSTER}")
 
-# Configure for each vector field in VECTOR_COLLECTION we want to cluster upon.
-# Use its source text field name: embedding field name as a {key: value} pair.
-# Use "text": "embedding" for demo vectors
-v_embeddings = {
-    "text": "embedding",
-}
 
-# vector db - local test Mongo server, or any valid user-auth'd URI etc.
-vector_mongo_uri = "localhost:27017"
-vector_db_name = "demo_db"
-mongo_client = pymongo.MongoClient(vector_mongo_uri)
-vector_db = mongo_client[vector_db_name]
+mongo_client = pymongo.MongoClient(VECTOR_MONGO_URI)
+vector_db = mongo_client[VECTOR_DB_NAME]
 
-# Configure namespace of the output clustered centroids data
-fitted_collection = VECTOR_COLLECTION + "_fitted_semantic_clusters"
-print(f"Writing cluster data to {vector_db_name}.{fitted_collection}")
+print(f"Writing cluster data to {VECTOR_DB_NAME}.{FITTED_COLLECTION}")
 # clean slate for fitted output centroids
-vector_db[fitted_collection].delete_many({})
+vector_db[FITTED_COLLECTION].delete_many({})
 
 tokenizer = tiktoken.get_encoding("p50k_base") # conservative token size
 model_client = OpenAI()
@@ -158,26 +163,30 @@ Output only in JSON similar to this: `{ "MERGED_STATEMENT_PATTERNS": "<< unified
 ##
 
 # load the demo_db with test texts and their vectors
+# comment this out to use your own existing vector db collection
 load_demo_vectors(
-    vector_db_name,
+    VECTOR_DB_NAME,
     VECTOR_COLLECTION,
     EMBEDDING_MODEL
 )
 
 # iterate over embeddings to cluster
-for v_field_text, v_field_embed in v_embeddings.items():
+for v_field_text, v_field_embed in V_EMBEDDINGS.items():
 
     # load vectors embedding the text field
-    print(f"Fetching {vector_db_name}.{VECTOR_COLLECTION}.{v_field_embed} vectors ...")
+    print(f"Fetching {VECTOR_DB_NAME}.{VECTOR_COLLECTION}.{v_field_embed} vectors ...")
     raw_vectors = list(vector_db[VECTOR_COLLECTION].find(
         {
-            # don't need to worry about this for demo vectors
-            # v_field_text: {'$exists':1},
-            # v_field_embed: {'$exists':1},
+            # we don't need to worry about this for demo vectors
+            # but it becomes important for any known partial vector set coverage
+            # v_field_text: {'$exists':1}, v_field_embed: {'$exists':1},
+            # 'field_to_accumulate': {'$exists:1}, # example non-vector field 'field_to_accumulate' to collect in centroids
         },
         {
             v_field_text: 1,
             v_field_embed: 1,
+            # example non-vector field 'field_to_accumulate' to collect in centroids
+            #'field_to_accumulate': 1,
             '_id': 0,
         }
     ))
@@ -189,7 +198,12 @@ for v_field_text, v_field_embed in v_embeddings.items():
     vectors = np.array(vectors,dtype=np.float32)
     x_size = len(vectors)
     y_size = len(vectors[0])
+
+    # example collection of non-vector field 'field_to_accumulate' for centroids
+    #side_data_accumulation = []
+    #side_data_accumulation.extend([v['field_to_accumulate'] for v in raw_vectors])
     del raw_vectors
+
 
     print(f"Fetched {x_size} vectors each length {y_size}, total size MB = {sys.getsizeof(vectors)/1024/1024:.3f}")
 
@@ -263,8 +277,10 @@ for v_field_text, v_field_embed in v_embeddings.items():
                 print(f"Rejected vector cluster {cluster['node_label']} at stderr = {c_vector_stderrs[k]}\n")
                 continue
 
-            print(f"{vector_db_name}.{VECTOR_COLLECTION} vector cluster centroid {cluster['node_label']}, member_vectors = {members} ({100*members/x_size:.3f}% of population):")
+            print(f"{VECTOR_DB_NAME}.{VECTOR_COLLECTION} vector cluster centroid {cluster['node_label']}, member_vectors = {members} ({100*members/x_size:.3f}% of population):")
             closest_texts, rejected_members = [], 0
+            # example collection of non-vector field 'field_to_accumulate' into centroid
+            #side_data_accumulated = []
             for iv in cluster['rg_ix']:
                 v, t = vectors[iv], texts[iv]
                 # (hyper-)space Pythagorean vector separation
@@ -285,6 +301,8 @@ for v_field_text, v_field_embed in v_embeddings.items():
                 # save the v_field_text of each vector to make a token-friendly
                 # frequency table to ask the LLM to merge-summarize as a class.
                 closest_texts.append( s )
+                # example saving non-vector field 'field_to_accumulate' into centroid
+                #side_data_accumulated.append(side_data_accumulation[iv])
 
             closest_texts.sort()
             if len(closest_texts) == 0:
@@ -311,11 +329,13 @@ for v_field_text, v_field_embed in v_embeddings.items():
                 "rejected_members": rejected_members,
                 "centroid_texts": closest_texts,
                 "centroid_embedding": list(c_vectors[k]),
+                # example non-vector field 'field_to_accumulate' as-accumulated for this centroid
+                #"centroid_field_to_accumulate": side_data_accumulated,
             }
             if not CONFIGURE_VEC2TEXT:
                 del centroid_doc[f"centroid_{v_field_text}_vec2text"]
 
-            res = vector_db[fitted_collection].insert_one( centroid_doc )
+            res = vector_db[FITTED_COLLECTION].insert_one( centroid_doc )
             assert res.inserted_id
             print(f"Stored clustered vector centroid {cluster['node_label']}: {c_vector_text_LLM}\n")
 

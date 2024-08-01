@@ -53,11 +53,11 @@ EMBEDDING_MODEL = "text-embedding-ada-002"
 DEVICE = vec2text.models.model_utils.get_device() # use GPU when available
 CORRECTOR = vec2text.load_pretrained_corrector(EMBEDDING_MODEL)
 
+model_client = OpenAI()
 
 def get_embeddings_vectors(text_list, model=EMBEDDING_MODEL) -> list[np.ndarray]:
     """ get embedding vectors and load into a list of numpy arrays. """
-    client = OpenAI()
-    response = client.embeddings.create(
+    response = model_client.embeddings.create(
         input=text_list,
         model=model,
         encoding_format="float", # match np.dtype = 'float32'
